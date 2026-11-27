@@ -20,7 +20,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 export const NAV: Record<Role, NavItem[]> = {
   admin: [
     { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: true },
-    { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: false },
+    { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: true },
     { label: "Pay setup", href: "/pay-setup", note: "Rates, allowances, deductions", icon: "wallet", ready: false },
     { label: "Run payroll", href: "/payroll", note: "Process a pay period", icon: "play", ready: false },
     { label: "Payslips", href: "/payslips", note: "View all payslips", icon: "receipt", ready: false },
@@ -29,7 +29,7 @@ export const NAV: Record<Role, NavItem[]> = {
   ],
   hr: [
     { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: true },
-    { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: false },
+    { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: true },
     { label: "Reports", href: "/reports", note: "Absence and lateness reports", icon: "chart", ready: false },
   ],
   payroll: [
@@ -40,6 +40,6 @@ export const NAV: Record<Role, NavItem[]> = {
   ],
   employee: [
     { label: "My attendance", href: "/my-attendance", note: "Your own attendance records", icon: "clock", ready: false },
-    { label: "My payslips", href: "/my-payslips", note: "Your own payslips", icon: "receipt", ready: false },
+    { label: "My payslips", href: "/my-payslips", note: "View your own payslips", icon: "receipt", ready: false },
   ],
 };
