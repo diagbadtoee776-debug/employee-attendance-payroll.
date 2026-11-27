@@ -19,7 +19,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 // Which modules each role may open. The database (RLS) enforces the same rules.
 export const NAV: Record<Role, NavItem[]> = {
   admin: [
-    { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: false },
+    { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: true },
     { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: false },
     { label: "Pay setup", href: "/pay-setup", note: "Rates, allowances, deductions", icon: "wallet", ready: false },
     { label: "Run payroll", href: "/payroll", note: "Process a pay period", icon: "play", ready: false },
@@ -28,7 +28,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: "Audit log", href: "/audit-log", note: "Who changed what", icon: "shield", ready: false },
   ],
   hr: [
-    { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: false },
+    { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: true },
     { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: false },
     { label: "Reports", href: "/reports", note: "Absence and lateness reports", icon: "chart", ready: false },
   ],
