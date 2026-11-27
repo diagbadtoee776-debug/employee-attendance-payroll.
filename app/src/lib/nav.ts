@@ -22,7 +22,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: "Employees", href: "/employees", note: "Manage staff records", icon: "users", ready: true },
     { label: "Attendance", href: "/attendance", note: "Record and review attendance", icon: "clock", ready: true },
     { label: "Pay setup", href: "/pay-setup", note: "Rates, allowances, deductions", icon: "wallet", ready: false },
-    { label: "Run payroll", href: "/payroll", note: "Process a pay period", icon: "play", ready: false },
+    { label: "Run payroll", href: "/payroll", note: "Process a pay period", icon: "play", ready: true },
     { label: "Payslips", href: "/payslips", note: "View all payslips", icon: "receipt", ready: false },
     { label: "Reports", href: "/reports", note: "Payroll and absence reports", icon: "chart", ready: false },
     { label: "Audit log", href: "/audit-log", note: "Who changed what", icon: "shield", ready: false },
@@ -34,7 +34,7 @@ export const NAV: Record<Role, NavItem[]> = {
   ],
   payroll: [
     { label: "Pay setup", href: "/pay-setup", note: "Rates, allowances, deductions", icon: "wallet", ready: false },
-    { label: "Run payroll", href: "/payroll", note: "Process a pay period", icon: "play", ready: false },
+    { label: "Run payroll", href: "/payroll", note: "Process a pay period", icon: "play", ready: true },
     { label: "Payslips", href: "/payslips", note: "View all payslips", icon: "receipt", ready: false },
     { label: "Reports", href: "/reports", note: "Payroll reports", icon: "chart", ready: false },
   ],
