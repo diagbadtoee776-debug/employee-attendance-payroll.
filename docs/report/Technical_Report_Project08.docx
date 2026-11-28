@@ -1,0 +1,437 @@
+Employee Attendance and Payroll Processing System
+Technical Report: CSENG 407 Final Individual Database Software Project (Project 08)
+William V. S. Tubman University, College of Engineering and Technology, Department of Computer Science and Engineering
+Student: Oliver D Toee
+Student ID: 35816
+Lecturer: Dr. Chris Gilbert
+Submission date: 7 December 2026
+Database: Supabase PostgreSQL
+Repository: https://github.com/diagbadtoee776-debug/employee-attendance-payroll
+Abstract
+This report describes the design and implementation of an Employee Attendance and Payroll Processing System, built as the final individual project for CSENG 407. The system records and validates daily employee attendance and uses it to calculate simulated payroll for a pay period. The database is a normalized PostgreSQL schema of 14 tables hosted on Supabase. Business rules are enforced inside the database through constraints, exclusion constraints, triggers, an atomic payroll function and Row Level Security, so they hold whichever client connects. A Next.js web application provides login, role-based dashboards and seven modules: employees, attendance, pay setup, payroll runs, payslips, reports and an audit log. The report covers requirements, entity-relationship modelling, functional dependencies and normalization to BCNF, SQL implementation, security with allowed and denied evidence, transactions and concurrency, backup and recovery, object-relational and XML topics, and testing. All data in the project is synthetic.
+Contents
+1.	Business analysis
+2.	Conceptual design: entity-relationship diagram
+3.	Relational mapping and data dictionary
+4.	Functional dependencies and normalization
+5.	System architecture and implementation
+6.	SQL: queries, views, function, trigger and performance
+7.	Security
+8.	Transactions and concurrency
+9.	Backup and recovery
+10.	Advanced topics: object-relational design and XML
+11.	Testing
+12.	Limitations and future work
+13.	Conclusion
+References, Appendix A (repository structure) and Appendix B (rebuild procedure)
+1. Business Analysis
+1.1 Problem statement
+Many small and medium organizations still track attendance on paper or in spreadsheets and calculate pay by hand. This causes recurring problems:
+•	Attendance is entered twice, entered for the wrong day, or never entered, and nobody notices.
+•	Pay is calculated with inconsistent rules, so overtime, allowances and deductions differ from one month to the next.
+•	Salary information is visible to people who have no reason to see it.
+•	There is no trail showing who changed a pay rate or when.
+•	A payroll run that fails halfway leaves some employees paid and others not.
+The system solves these problems with one trusted database that validates every attendance record, calculates pay by one consistent rule set, restricts sensitive data by role, records changes in an audit log, and either completes a payroll run fully or not at all.
+1.2 Scope
+In scope: maintaining employees, departments, positions and shifts; recording and validating daily attendance; managing pay rates, allowances and deductions; defining pay periods and running simulated payroll; generating itemized payslips; management reports; authentication, role-based access and an audit log.
+Out of scope: real money transfers, bank integration and real tax law (payroll is simulated); biometric clock-in devices; leave-balance accruals; multi-currency payroll; native mobile applications.
+1.3 Target users and roles
+Role	Who	Main permissions
+Administrator	System owner	Full access, manages roles, reads the audit log
+HR	HR officer	Manages employees, departments, positions, shifts and attendance. Cannot see pay data
+Payroll	Payroll officer	Manages pay rates, allowances, deductions and pay periods. Runs payroll. Views all payslips. Read-only attendance
+Employee	Any staff member	Views own profile, attendance and payslips only
+1.4 Functional requirements
+ID	Requirement
+FR1	Users log in with email and password, and each user has one role
+FR2	HR creates, views, updates and deactivates employee records, including position and shift
+FR3	HR manages departments, positions and shifts
+FR4	HR records daily attendance (clock-in, clock-out, status), one record per employee per day
+FR5	The system rejects invalid attendance: future dates, clock-out before clock-in, terminated employees, duplicate days
+FR6	Payroll staff maintain hourly pay rates with effective dates, and past rates are kept as history
+FR7	Payroll staff assign allowances to employees and define percentage or fixed deductions
+FR8	Payroll staff create pay periods and run payroll for an open period
+FR9	The system generates a payslip per active employee with regular and overtime hours, gross pay, allowances, deductions and net pay
+FR10	Employees view their own attendance history and payslips
+FR11	The system produces a payroll summary by department and period
+FR12	The system produces an absence and lateness report by employee and period
+FR13	Every insert, update and delete on employees, pay rates and payslips is written to an audit log visible to the administrator
+1.5 Non-functional requirements
+ID	Requirement
+NFR1 Security	Row Level Security is enabled on every table, anonymous users have no access, and secret keys never appear in client code or the repository
+NFR2 Integrity	Rules are enforced inside the database through constraints, triggers and transactions, not only in the interface
+NFR3 Performance	Common queries return in under one second, supported by justified indexes
+NFR4 Reproducibility	The whole database can be rebuilt from versioned migration and seed files
+NFR5 Usability	The interface works on desktop and mobile browsers and shows clear messages when a rule rejects an action
+NFR6 Privacy	Only synthetic data is used
+1.6 Business rules
+ID	Rule
+BR1	An employee has at most one attendance record per day
+BR2	Attendance cannot be recorded for a future date or for a terminated employee
+BR3	Clock-out must be later than clock-in, and clock-in must fall on the attendance date
+BR4	Pay periods cannot overlap, and a period can be processed only once
+BR5	An employee cannot have two pay rates that overlap in time
+BR6	The first 8 hours of each day are regular hours. Hours beyond 8 are overtime, paid at the employee's overtime multiplier (default 1.5)
+BR7	Gross pay is regular plus overtime pay. Net pay is gross pay plus allowances minus deductions and can never be negative
+BR8	An employee has at most one payslip per pay period
+BR9	Payroll is all-or-nothing: if any active employee has no valid pay rate, the whole run is rolled back
+BR10	Pay details are visible only to Administrator and Payroll, except that each employee may see their own payslips
+2. Conceptual Design: Entity-Relationship Diagram
+2.1 Entities
+Entity	Identifier	Key attributes
+DEPARTMENTS	id (alternate key: name)	Name
+POSITIONS	id (alternate key: title)	Title
+SHIFTS	id (alternate key: name)	name, start_time, end_time, grace_minutes
+EMPLOYEES	id (alternate keys: employee_no, email)	names, hire_date, status
+PROFILES	user_id	Role
+ATTENDANCE	id (alternate key: employee + date)	work_date, clock_in, clock_out, status, note
+PAY_RATES	id	hourly_rate, overtime_multiplier, effective_from, effective_to
+ALLOWANCE_TYPES	id (alternate key: name)	name, taxable
+EMPLOYEE_ALLOWANCES	(employee_id, allowance_type_id)	Amount
+DEDUCTION_TYPES	id (alternate key: name)	name, method, value, active
+PAY_PERIODS	id (alternate key: label)	label, start_date, end_date, status
+PAYSLIPS	id (alternate key: employee + period)	hours, gross_pay, total_allowances, total_deductions, net_pay
+PAYSLIP_LINES	id	line_type, description, amount
+AUDIT_LOG	id	table_name, record_id, action, old_data, new_data, changed_by, changed_at
+2.2 Relationships, cardinality and participation
+Relationship	Cardinality	Participation
+DEPARTMENTS has POSITIONS	1:N	A position must belong to a department (total). A department may have no positions yet (partial)
+POSITIONS held by EMPLOYEES	1:N	An employee must have a position (total)
+SHIFTS assigned to EMPLOYEES	1:N	An employee must have a shift (total)
+EMPLOYEES record ATTENDANCE	1:N	Attendance must belong to an employee (total). An employee may have none yet (partial)
+EMPLOYEES paid at PAY_RATES	1:N	A rate must belong to an employee (total)
+EMPLOYEES receive ALLOWANCE_TYPES	M:N, resolved by EMPLOYEE_ALLOWANCES	Both sides partial
+EMPLOYEES earn PAYSLIPS	1:N	A payslip must belong to one employee and one period (total)
+PAY_PERIODS cover PAYSLIPS	1:N	Total on the payslip side
+PAYSLIPS itemized into PAYSLIP_LINES	1:N	A line cannot exist without its payslip (existence dependent)
+Login account and EMPLOYEES / PROFILES	1:1	Optional on the employee side
+The required many-to-many relationship is EMPLOYEES to ALLOWANCE_TYPES: an employee can receive many allowances and an allowance type can be given to many employees. It is resolved by the associative table EMPLOYEE_ALLOWANCES, whose composite primary key (employee_id, allowance_type_id) also carries the attribute amount. DEDUCTION_TYPES and AUDIT_LOG have no foreign keys on purpose: deductions are company-wide rules applied by the payroll function, and the audit log stores snapshots that must survive the deletion of the rows they describe.
+[Figure 1: Entity-relationship diagram. Insert docs/erd.png here.]
+3. Relational Mapping and Data Dictionary
+3.1 Mapping rules
+Each entity became a table. Every 1:N relationship became a foreign key on the N side. The M:N relationship became an associative table with a composite primary key. Each table has a surrogate identity key (bigint generated always as identity), and natural identifiers such as employee_no, email and label are kept as UNIQUE alternate keys.
+3.2 Relational schema
+Primary keys are in bold, foreign keys in italics.
+•	DEPARTMENTS(id, name)
+•	POSITIONS(id, title, department_id)
+•	SHIFTS(id, name, start_time, end_time, grace_minutes)
+•	EMPLOYEES(id, employee_no, first_name, last_name, email, position_id, shift_id, hire_date, status, user_id)
+•	PROFILES(user_id, role)
+•	PAY_RATES(id, employee_id, hourly_rate, overtime_multiplier, effective_from, effective_to)
+•	ALLOWANCE_TYPES(id, name, taxable)
+•	EMPLOYEE_ALLOWANCES(employee_id, allowance_type_id, amount)
+•	DEDUCTION_TYPES(id, name, method, value, active)
+•	ATTENDANCE(id, employee_id, work_date, clock_in, clock_out, status, note)
+•	PAY_PERIODS(id, label, start_date, end_date, status)
+•	PAYSLIPS(id, employee_id, period_id, regular_hours, overtime_hours, gross_pay, total_allowances, total_deductions, net_pay, generated_at)
+•	PAYSLIP_LINES(id, payslip_id, line_type, description, amount)
+•	AUDIT_LOG(id, table_name, record_id, action, old_data, new_data, changed_by, changed_at)
+The full data dictionary, with every column, type and constraint, is in docs/data-dictionary.md in the repository.
+3.3 Integrity constraints
+Type	Examples
+PRIMARY KEY	Every table. EMPLOYEE_ALLOWANCES uses a composite key
+FOREIGN KEY	positions.department_id, employees.position_id, attendance.employee_id, payslips.period_id and others. ON DELETE RESTRICT, CASCADE or SET NULL chosen per relationship
+NOT NULL	Required attributes such as names, dates and amounts
+UNIQUE	employee_no, email, pay period label, (employee_id, work_date), (employee_id, period_id)
+CHECK	Format of employee_no (EMP plus 4 digits), hire_date not in the future, hourly_rate above 0, overtime_multiplier at least 1, status lists, net_pay not negative, clock_out after clock_in
+DEFAULT	status 'active', overtime_multiplier 1.50, grace_minutes 10, timestamps now()
+EXCLUSION	No overlapping pay periods, and no overlapping pay rates for one employee (btree_gist with daterange)
+3.4 Indexes
+Index	Columns	Justification
+idx_attendance_date_emp	attendance (work_date, employee_id)	Date-first lookups such as a daily roll call or a report for one day
+idx_payslips_period	payslips (period_id)	Reports and joins by pay period
+idx_employees_position	employees (position_id)	Foreign key joins to positions and departments
+idx_audit_table_time	audit_log (table_name, changed_at desc)	Audit review by table and recent time
+PostgreSQL also creates indexes automatically for every primary key and UNIQUE constraint.
+4. Functional Dependencies and Normalization
+4.1 Functional dependencies
+#	Table	Functional dependency	Meaning
+FD1	employees	employee_no → first_name, last_name, email, position_id, shift_id, hire_date, status	The staff number identifies one employee
+FD2	employees	email → employee_no	Email is unique, so it is a candidate key
+FD3	positions	title → department_id	A job title belongs to exactly one department
+FD4	shifts	name → start_time, end_time, grace_minutes	A shift name fixes its hours
+FD5	attendance	(employee_id, work_date) → clock_in, clock_out, status	One record per employee per day
+FD6	pay_rates	(employee_id, effective_from) → hourly_rate, overtime_multiplier, effective_to	A rate starts on one date for one employee
+FD7	employee_allowances	(employee_id, allowance_type_id) → amount	One amount per employee per allowance
+FD8	pay_periods	label → start_date, end_date, status	A period label identifies its dates
+FD9	payslips	(employee_id, period_id) → hours, gross_pay, allowances, deductions, net_pay	One payslip per employee per period
+FD10	payslip_lines	id → payslip_id, line_type, description, amount	A line item is identified by its id
+FD11	payslips	(gross_pay, total_allowances, total_deductions) → net_pay	Net pay is calculated (see 4.6)
+4.2 Unnormalized form
+The starting point is a spreadsheet of the kind HR might keep by hand. One row holds several values in the allowances and attendance cells.
+employee_no	name	department	position	shift	shift_start	allowances	attendance
+EMP0001	Joseph Kollie	Administration	Office Manager	Day	09:00	Transport 50; Housing 120	2026-11-09 present; 2026-11-10 late
+4.3 First normal form (1NF)
+Each cell now holds one value, with one row per employee, allowance and date. The candidate key is (employee_no, allowance_type, work_date).
+employee_no	name	department	position	shift	shift_start	allowance_type	amount	work_date	status
+EMP0001	Joseph Kollie	Administration	Office Manager	Day	09:00	Transport	50	2026-11-09	present
+EMP0001	Joseph Kollie	Administration	Office Manager	Day	09:00	Transport	50	2026-11-10	late
+EMP0001	Joseph Kollie	Administration	Office Manager	Day	09:00	Housing	120	2026-11-09	present
+EMP0001	Joseph Kollie	Administration	Office Manager	Day	09:00	Housing	120	2026-11-10	late
+Problem: heavy redundancy. The name and the Transport amount repeat in many rows, which causes update anomalies.
+4.4 Second normal form (2NF)
+Partial dependencies on part of the key were removed:
+•	employee_no → name, department, position, shift, shift_start
+•	(employee_no, allowance_type) → amount
+•	(employee_no, work_date) → status
+Decomposition: EMPLOYEE(employee_no, name, department, position, shift, shift_start), EMPLOYEE_ALLOWANCE(employee_no, allowance_type, amount) and ATTENDANCE(employee_no, work_date, status).
+4.5 Third normal form (3NF)
+Inside EMPLOYEE two transitive dependencies remained: employee_no → position → department, and employee_no → shift → shift_start. They were removed by creating DEPARTMENTS, POSITIONS and SHIFTS, giving the structure in section 3.2. A department rename or a change of shift hours is now made in exactly one row.
+4.6 BCNF assessment
+A table is in BCNF when every determinant is a candidate key. All tables satisfy this: departments (keys id, name), positions (id, title), shifts (id, name), employees (id, employee_no, email), attendance (id, and employee_id with work_date), pay_rates (id, and employee_id with effective_from), employee_allowances (the composite key), pay_periods (id, label), payslips (id, and employee_id with period_id) and payslip_lines (id).
+Two points deserve explanation.
+A real 3NF violation was found and fixed. The first version of employees stored both department_id and position_id. Because position_id determines department_id (FD3), the department was already determined through the position, a transitive dependency, and an inconsistent row (an Accountant listed under Operations) was possible. Migration 003_remove_redundant_department.sql dropped employees.department_id. The department is now derived through positions.department_id, and the view v_employee_details presents it.
+Controlled redundancy in payslips. payslips stores gross_pay, total_allowances, total_deductions and net_pay, where net_pay equals gross plus allowances minus deductions (FD11). Strictly this is a departure from 3NF, kept deliberately: a payslip is a historical snapshot that must not change when rates, allowances or deduction percentages change later; reports can read stored totals directly; and the CHECK constraint on net_pay plus the payroll function keep the values consistent, with payslip_lines holding the itemized evidence.
+4.7 Fourth normal form (4NF)
+4NF removes multivalued dependencies where two independent multivalued facts share a table. An employee has many allowances and many attendance records, which are independent facts. Stored together in one table, every allowance would repeat for every date. They are kept in separate tables (employee_allowances and attendance), so no table holds two independent multivalued dependencies and the schema satisfies 4NF.
+4.8 Fifth normal form (5NF)
+5NF removes join dependencies that candidate keys do not imply. The only association table, employee_allowances, is binary, and its amount depends on the whole pair (employee, allowance type), so it cannot be split further without losing information. No three-way relationship exists that could be rebuilt by joining three smaller tables: payslip details are held by payslip_lines keyed by payslip, not as a hidden ternary relation. A higher decomposition would add complexity with no benefit, so 5NF is satisfied and no further decomposition is relevant.
+5. System Architecture and Implementation
+5.1 Architecture
+Layer	Technology	Responsibility
+Browser interface	Next.js (React, TypeScript) with plain CSS	Pages, forms, role-based navigation, friendly error messages
+API and authentication	Supabase Auth and the Supabase data API (PostgREST)	Login sessions, REST calls to tables, views and functions
+Database	PostgreSQL on Supabase	Tables, constraints, triggers, functions, Row Level Security
+Version control	GitHub	Migrations, seeds, source code, tests and documentation
+The browser never talks to the database directly. Every request goes through the Supabase API carrying the user's session token, and PostgreSQL decides what that user may read or change.
+5.2 Authentication flow
+1.	The user enters an email and password, and the app calls Supabase Auth to sign in.
+2.	Supabase returns a session token, which the client library stores.
+3.	The app reads the user's own row in profiles (the role) and the linked row in employees (the name). Row Level Security lets each user read only their own rows.
+4.	The dashboard and the sidebar show only the modules allowed for that role.
+5.	Every later query carries the token, and PostgreSQL evaluates the security policies with auth.uid(). Editing the page in the browser therefore cannot widen access.
+5.3 Application modules
+Module	Route	Who	What it does
+Dashboard	/dashboard	All	Role-filtered totals and the modules available to the role
+Employees	/employees	Admin, HR (create, edit); Payroll (read)	Search, add, edit, deactivate and reactivate staff
+Attendance	/attendance	Admin, HR (create, edit, delete); Payroll (read); Employee (own)	Date, employee and status filters, summary cards, record and correct attendance
+Pay setup	/pay-setup	Admin, Payroll	Pay rates with history, allowance types and assignments (M:N), deductions
+Run payroll	/payroll	Admin, Payroll (run); others read	Create pay periods and run payroll through the calculate_payroll function
+Payslips	/payslips	Admin, Payroll (all); Employee (own)	Payslip list with an itemized view
+Reports	/reports	Admin, HR, Payroll	Payroll by department, absence and lateness, overtime leaders
+Audit log	/audit-log	Admin	Who changed what, from the audit triggers
+CRUD is implemented for employees, attendance, pay rates, allowances, deductions and pay periods, which exceeds the minimum of four main modules.
+5.4 Design decisions
+•	The browser uses only the Supabase publishable key. The secret (service role) key is never used in the application.
+•	Database error messages (for example a unique-constraint name) are translated into plain language, so a rejected action explains itself to the user.
+•	The same business rules exist in the database and, where useful, in the form (date limits, required fields), but the database is the authority.
+5.5 Versioned files
+File	Purpose
+supabase/migrations/001_schema.sql	Tables, constraints, indexes, triggers, payroll function, views, Row Level Security
+supabase/migrations/002_seed.sql	Synthetic seed data (safe to re-run)
+supabase/migrations/003_remove_redundant_department.sql	The 3NF correction described in section 4.6
+supabase/queries/	16 example queries with an EXPLAIN demonstration, and the XML demonstration
+supabase/tests/	Test setup, 21 security and constraint tests, concurrency demo, backup and restore demo
+6. SQL: Queries, Views, Function, Trigger and Performance
+6.1 Sample data
+Table	Rows	Table	Rows
+departments	5	allowance_types	2
+positions	10	employee_allowances	12
+shifts	3	deduction_types	3
+employees	10 (8 active, 1 on leave, 1 terminated)	pay_periods	2
+pay_rates	10	attendance	80 (9 to 20 November 2026)
+The attendance pattern is generated deterministically and includes present, late, absent and leave days and some overtime. Running payroll for the first pay period creates 8 payslips, one for each active employee. All names are invented.
+6.2 Example queries
+Sixteen queries are in supabase/queries/01_example_queries.sql.
+Query	Technique
+Q1	Join of four tables with ORDER BY: employee directory
+Q2	Filtering with WHERE: active staff hired before 2021
+Q3	LEFT JOIN, COUNT with FILTER and GROUP BY: headcount per department
+Q4	GROUP BY with HAVING: employees late two or more times
+Q5	Join with a view, SUM and GROUP BY: hours per employee
+Q6	Aggregate with a window function: attendance status distribution
+Q7	Nested scalar subquery: employees paid above the average rate
+Q8	Correlated subquery: net pay above the average of the employee's own department
+Q9	NOT EXISTS (correlated): active employees with no absences
+Q10	Join, SUM, GROUP BY and HAVING: payroll totals per department
+Q11	LEFT JOIN with IS NULL: employees without a payslip
+Q12	Three-table join: itemized payslip
+Q13	ORDER BY with LIMIT: top three by overtime
+Q14	M:N join with string_agg and SUM: allowances per employee
+Q15	CTE with a nested subquery: department with the highest net pay
+Q16	Aggregate over the audit log
+Example, the correlated subquery (Q8):
+select e.employee_no, d.name as department, ps.net_pay
+from payslips ps
+join employees e on e.id = ps.employee_id
+join positions p on p.id = e.position_id
+join departments d on d.id = p.department_id
+where ps.net_pay > (
+    select avg(ps2.net_pay)
+    from payslips ps2
+    join employees e2 on e2.id = ps2.employee_id
+    join positions p2 on p2.id = e2.position_id
+    where p2.department_id = p.department_id
+      and ps2.period_id = ps.period_id);
+[Figure 2: Result of Q4 and Q8 in the Supabase SQL Editor.]
+6.3 Views
+View	Purpose
+v_attendance_hours	Hours worked per day, split into regular (first 8 hours) and overtime
+v_payroll_summary	Totals by pay period and department
+v_absence_report	Days absent and days late per employee and period
+v_employee_details	Employee with department (derived through the position), position and shift
+All views use security_invoker, so they respect the Row Level Security of the user who queries them.
+6.4 Stored function: calculate_payroll
+calculate_payroll(period_id) runs the whole payroll in one transaction:
+1.	Rejects callers who are not administrator or payroll.
+2.	Locks the pay period row (FOR UPDATE) and rejects the run unless the period is open.
+3.	For each active employee, finds the pay rate valid on the period end date. If none exists it raises an error, which rolls everything back.
+4.	Sums regular and overtime hours from v_attendance_hours for present and late days.
+5.	Calculates gross pay, adds the employee's allowances, applies every active deduction (percentage or fixed) and creates the payslip and its itemized lines.
+6.	Marks the period as processed and returns the number of payslips.
+The CHECK constraint net_pay >= 0 makes the run fail if deductions would exceed pay.
+6.5 Triggers
+•	validate_attendance (BEFORE INSERT OR UPDATE on attendance) is a business-rule trigger. It rejects attendance for a terminated employee, for a future date, or with a clock-in on a different date from the attendance date.
+•	audit_employees, audit_pay_rates, audit_payslips (AFTER INSERT, UPDATE or DELETE) are audit triggers. Each writes the table name, row id, action, the old and new row as JSON, the user and the time to audit_log.
+6.6 Query performance and index rationale
+The query that totals hours per employee for a pay period was examined with EXPLAIN (ANALYZE, BUFFERS). PostgreSQL chose an Index Only Scan on attendance_employee_id_work_date_key, the index that the UNIQUE (employee_id, work_date) constraint creates automatically. It contains both columns the query needs and is already ordered by employee, so it was the cheapest path.
+The extra index idx_attendance_date_emp (work_date, employee_id) serves a different access pattern: date-first lookups such as a daily roll call, where work_date must be the leading column. With only 80 rows PostgreSQL may prefer a sequential scan, because reading one small page is cheaper than using an index, so the use of the index was demonstrated by disabling sequential scans in the session (set enable_seqscan = off). On a real company's data, with thousands of attendance rows, these indexes avoid scanning every row.
+[Figure 3: EXPLAIN plans for the period query and for the single-day query.]
+7. Security
+7.1 Roles and permission matrix
+C create, R read, U update, D delete, R(own) own rows only, - no access.
+Table	Admin	HR	Payroll	Employee
+departments, positions, shifts	CRUD	CRUD	R	R
+employees	CRUD	CRUD	R	R(own)
+profiles	CRUD	R(own)	R(own)	R(own)
+attendance	CRUD	CRUD	R	R(own)
+pay_rates, allowance_types, employee_allowances, deduction_types	CRUD	-	CRUD	-
+pay_periods	CRUD	R	CRUD	R
+payslips, payslip_lines	R	-	R	R(own)
+audit_log	R	-	-	-
+Payslips are created only by calculate_payroll, never written directly by any role. Anonymous users have no access to any table. Only administrators and payroll staff can execute the payroll function.
+7.2 Row Level Security design
+•	RLS is enabled on all 14 tables, and the anon role is stripped of table privileges.
+•	Two helper functions, app_role() and my_employee_id(), read the caller's role and employee record. They are SECURITY DEFINER with a fixed search_path, so policies can look up roles without exposing the profiles table.
+•	Policies are written per role. For example, employees can read a payslip only when employee_id = my_employee_id(), and HR policies contain no rule for pay tables, so HR sees zero rows there.
+•	The payroll function is SECURITY DEFINER and performs its own explicit role check, because it writes to tables that no role may write directly.
+7.3 Secret handling
+•	The browser app uses only the publishable key. The secret key is never used or stored.
+•	Real keys live in app/.env.local, which Git ignores. The repository contains only .env.example with placeholders.
+•	No passwords, real personal data or real financial data are in the repository.
+7.4 Evidence of allowed and denied operations
+The script supabase/tests/01_security_tests.sql runs 21 tests by simulating each test login's token with the authenticated database role, so Row Level Security is genuinely active. Statements that change data are always rolled back.
+Type	Count	Examples
+Positive	5	Admin reads all pay rates; HR records valid attendance; admin reads the audit log
+Negative	4	Employee inserts attendance (denied); HR changes a pay rate (0 rows); payroll re-runs a processed period (rejected)
+Security and permission	6	HR sees 0 pay rates and 0 payslips; employee sees only 1 payslip and 1 employee row; HR cannot run payroll
+Constraint and trigger	6	Duplicate attendance day; future date; terminated employee; overlapping pay period; negative hourly rate; overlapping pay rate
+[Figure 4: Security test results table, with expected and actual columns for all 21 tests.]
+The application shows the same restrictions: the dashboard totals differ by role (the HR login sees 0 payslips and the employee login sees 1 employee, 10 attendance records and 1 payslip), and pages reject roles that should not use them.
+[Figure 5: Dashboards for the HR and the employee logins.]
+8. Transactions and Concurrency
+8.1 A successful multi-table atomic transaction
+A payroll run writes to payslips, payslip_lines and pay_periods in one transaction (a function body is atomic). Running payroll for the first pay period creates 8 payslips with their itemized lines and changes the period status to processed, and the audit triggers record the new payslips. Either all of these changes are committed or none are.
+[Figure 6: Payroll run result and the itemized payslip.]
+8.2 A failed transaction that rolls back
+The function tests.rollback_demo() removes one employee's pay rate and then runs payroll for the second period. The run fails when it reaches that employee, with the error that no pay rate exists for EMP0008. The demonstration then shows that nothing was left behind: the removed rate is back (the sabotage was inside the same rolled-back block), no payslips exist for the second period, and the period is still open. This is business rule BR9 in action.
+[Figure 7: Result of the rollback demonstration.]
+8.3 Concurrency anomaly and mitigation
+The lost update anomaly. PostgreSQL's default isolation level, READ COMMITTED, does not stop two sessions from reading the same value and overwriting each other's change. Demonstration (supabase/tests/02_concurrency_demo.sql, two SQL Editor tabs): a department budget starts at 100, and two users spend 30 and 20.
+Step	Tab 1	Tab 2	Budget
+1	reads 100		100
+2	waits	spends 20 and commits	80
+3	writes 100 - 30 (stale value)		70
+The correct result is 50. Tab 2's change was lost.
+Mitigations.
+1.	Row lock: SELECT ... FOR UPDATE makes the second session wait, so the final result is 50.
+2.	Atomic update: SET remaining = remaining - 30 does the arithmetic inside one statement.
+3.	Optimistic locking with a version column, retrying when no row was updated.
+4.	SERIALIZABLE isolation with retry on serialization failure.
+Use in the project. calculate_payroll locks the pay period row, so two simultaneous runs for the same period cannot both succeed. The UNIQUE (employee_id, period_id) constraint on payslips is a second safeguard, and the exclusion constraints check overlaps atomically even under concurrent inserts.
+[Figure 8: Part A (result 70) and Part B (result 50) of the concurrency demonstration.]
+9. Backup and Recovery
+Three levels of protection are used or documented.
+Level	Description
+Platform backups	Supabase takes automatic daily backups of the project (point-in-time recovery is an optional add-on)
+Logical backup and restore	Demonstrated in supabase/tests/03_backup_restore_demo.sql
+Full rebuild	Recreate everything from the versioned migrations and seeds (Appendix B)
+Demonstration. The attendance table is copied to a backup schema, and its row count and an MD5 checksum are recorded. All attendance rows are then deleted, and the application dashboard shows 0 attendance records. The rows are restored from the backup copy, and the checksum after the restore equals the checksum before, proving the data is identical.
+[Figure 9: Backup, disaster and restore results with the matching checksum.]
+Limitations. A rebuild from seed files restores structure and sample data only, not data entered later; for that, platform backups or pg_dump are needed. Logins live in Supabase Auth, not in the seed files, so they must be recreated and given roles. Secrets must be entered again on a new project.
+10. Advanced Topics: Object-Relational Design and XML
+10.1 Relational versus object-relational design
+Aspect	Relational (used here)	Object-relational
+Data model	Tables of rows with atomic columns	Tables plus user-defined types, nested structures, arrays and inheritance
+Relationships	Foreign keys and joins	Foreign keys, plus references and nested collections inside a row
+Normalization	Strongly encouraged (1NF to BCNF)	Allows non-atomic values, such as an array of lines in one column
+Mismatch with application objects	Mapping between objects and tables is needed	Smaller mismatch, but less portable and harder to analyze
+Best fit	Transactional systems such as payroll	Complex or nested data such as CAD, media or documents
+PostgreSQL is itself object-relational, and the project uses some of its features inside a relational design: daterange values in exclusion constraints, jsonb columns in audit_log, the native xml type, and custom check constraints.
+A payslip's lines could have been stored as an array of a composite type inside the payslip row. This was rejected, because payroll needs reports across lines (for example totals by deduction type). A separate payslip_lines table keeps those queries simple, keeps the data in 3NF and lets constraints validate each line. Payroll is a transactional, integrity-critical domain, so the relational model fits best, and object-relational features are used only where they add value.
+10.2 XML and XPath
+PostgreSQL supports XML natively (xml type, xmlelement, xmlagg, xpath, xmlexists), so a real demonstration was possible. The script supabase/queries/02_xml_demo.sql builds one XML document per payslip and queries it.
+Sample document (illustrative values):
+<payslip id='1'>
+  <employee no='EMP0003'>Samuel Weah</employee>
+  <period>Nov 2026 Cycle 1</period>
+  <hours><regular>80.00</regular><overtime>4.00</overtime></hours>
+  <gross>1400.00</gross>
+  <net>1244.00</net>
+  <line type='deduction'><description>Income Tax</description><amount>140.00</amount></line>
+</payslip>
+Goal	XPath
+Net pay of every payslip	/payslip/net/text()
+Select by attribute	/payslip/employee/@no
+Only deduction lines	/payslip/line[@type='deduction']/description/text()
+Payslips above a threshold	/payslip[net > 1000]
+XML is treated as an exchange and export format for payslips. For daily operations the relational tables give stronger integrity, indexing and joins.
+[Figure 10: XML document and XPath query results.]
+11. Testing
+Area	Tests	Where
+Security and permissions	21 positive, negative, permission and constraint tests	supabase/tests/01_security_tests.sql
+Transaction failure	Payroll with a missing pay rate rolls back completely	tests.rollback_demo()
+Concurrency	Lost update and the row-lock fix	supabase/tests/02_concurrency_demo.sql
+Backup and restore	Delete and restore with checksum comparison	supabase/tests/03_backup_restore_demo.sql
+XML	Eight XPath queries over generated documents	supabase/queries/02_xml_demo.sql
+Performance	EXPLAIN plans with index rationale	supabase/queries/01_example_queries.sql
+User-interface tests of rejected actions:
+Action	Result shown to the user
+Add an employee with an existing email	That email is already used by another employee
+Record attendance twice for one day	This employee already has a record for that day
+Record attendance for a future date	Attendance cannot be recorded for a future date
+Record attendance for a terminated employee	Cannot record attendance for a terminated employee
+Create an overlapping pay period	These dates overlap an existing pay period
+Add an overlapping pay rate	These dates overlap another rate for the same employee
+Assign an allowance twice	This employee already has that allowance
+Add a deduction above 100 percent	A percentage cannot be more than 100
+Open the audit log as HR	Only administrators can view the audit log
+In total more than 30 tests cover positive, negative, constraint, permission and transaction-failure cases, which exceeds the minimum of ten.
+[Figure 11: Screenshots of rejected actions in the application.]
+12. Limitations and Future Work
+•	Payroll is simplified: a flat rule of 8 regular hours per day, a single overtime multiplier, and percentage or fixed deductions. It does not model real tax tables, leave balances, public holidays or multiple currencies.
+•	Attendance is entered by HR. Clock-in by employees, biometric devices and automatic lateness detection from the shift grace period are future work.
+•	Times are stored and shown in UTC, which equals Liberian local time but would need a time-zone setting for other regions.
+•	Raising an employee's pay requires ending the old rate before adding the new one, a deliberate rule that keeps history but could be automated.
+•	The sample data is deliberately small (10 employees and 80 attendance records) so results can be checked by hand. The seed script can be extended to larger volumes for performance testing.
+•	Tests are SQL scripts run by hand. An automated test runner and continuous integration are future improvements.
+•	Logins are managed in Supabase Auth, so creating users and assigning roles is an administrator task outside the application.
+13. Conclusion
+The project delivers a complete attendance and payroll system whose rules are enforced by the database itself. The schema is normalized to BCNF, with one documented and justified denormalization in payslips and one genuine 3NF defect found and corrected. Constraints, exclusion constraints, triggers and an atomic payroll function reject invalid data and failed runs, Row Level Security separates what each role can see, and an audit log records sensitive changes. The web application makes these rules visible through role-based dashboards and clear messages, and the supporting scripts demonstrate concurrency, backup and restore, XML and query performance. Everything can be rebuilt from versioned files in the repository.
+References
+•	Chen, P. P. (1976). The entity-relationship model: toward a unified view of data. ACM Transactions on Database Systems, 1(1), 9-36.
+•	Codd, E. F. (1970). A relational model of data for large shared data banks. Communications of the ACM, 13(6), 377-387.
+•	Elmasri, R. and Navathe, S. B. (2016). Fundamentals of Database Systems (7th ed.). Pearson.
+•	Silberschatz, A., Korth, H. F. and Sudarshan, S. (2019). Database System Concepts (7th ed.). McGraw-Hill.
+•	PostgreSQL Global Development Group. PostgreSQL documentation: Row Security Policies, Explicit Locking, Transaction Isolation, Range Types and Exclusion Constraints, XML Functions. https://www.postgresql.org/docs/ (accessed November 2026).
+•	Supabase. Documentation: Auth, Row Level Security, Database. https://supabase.com/docs (accessed November 2026).
+•	Vercel. Next.js documentation. https://nextjs.org/docs (accessed November 2026).
+Appendix A: Repository Structure
+employee-attendance-payroll/
+  supabase/
+    migrations/   001_schema.sql, 002_seed.sql, 003_remove_redundant_department.sql
+    queries/      01_example_queries.sql, 02_xml_demo.sql
+    tests/        00_test_setup.sql, 01_security_tests.sql,
+                  02_concurrency_demo.sql, 03_backup_restore_demo.sql
+  docs/           normalization.md, data-dictionary.md, permission-matrix.md,
+                  advanced-topics.md, erd.png, screenshots/
+  app/            Next.js application (src/app, src/components, src/lib)
+  .env.example    placeholder environment variables
+  README.md
+Appendix B: Rebuild Procedure
+1.	Create an empty Supabase project (or any PostgreSQL server).
+2.	In the SQL Editor run 001_schema.sql, then 002_seed.sql, then 003_remove_redundant_department.sql.
+3.	In Authentication create the test logins (admin, hr, payroll and employee), then run supabase/tests/00_test_setup.sql to assign their roles.
+4.	Copy .env.example to app/.env.local and enter the project URL and publishable key.
+5.	In the app folder run npm install and npm run dev, then open http://localhost:3000.
